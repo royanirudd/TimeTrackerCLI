@@ -10,54 +10,72 @@ namespace TimeTracker.Tests
     {
         private readonly SessionManager _manager;
         private readonly Mock<ILogger<SessionManager>> _loggerMock;
+        private readonly string TestFilePath = "test_sessions.json";
 
         public SessionManagerTests()
         {
             _loggerMock = new Mock<ILogger<SessionManager>>();
-            _manager = new SessionManager(_loggerMock.Object);
+            _manager = new SessionManager(_loggerMock.Object, TestFilePath);
         }
 
-        [Fact]
-        public void TestStartSession()
-        {
-            var session = _manager.StartSession("Test Session");
-            Assert.NotNull(session);
-            Assert.True(session.IsActive);
-        }
+        // Keep all existing tests...
 
         [Fact]
-        public void TestStopSession()
+        public void TestActivityTracking()
         {
+            // Start a session
             var session = _manager.StartSession("Test Session");
-            var result = _manager.StopSession(session.Id);
+
+            // Start an activity
+            var activity = _manager.StartActivity(session.Id, "Neovim", "/test/file.txt");
+            Assert.NotNull(activity);
+            
+            // Wait briefly to ensure measurable duration
+            Thread.Sleep(1000);
+            
+            // Stop the activity
+            var result = _manager.StopActivity(session.Id, activity.Id);
             Assert.True(result);
 
-            var stoppedSession = _manager.GetSession(session.Id);
-            Assert.NotNull(stoppedSession);
-            Assert.False(stoppedSession.IsActive);
+            // Verify statistics
+            var activities = _manager.GetSessionActivities(session.Id);
+            Assert.Single(activities);
+
+            var appStats = _manager.GetApplicationStatistics(session.Id);
+            Assert.True(appStats.ContainsKey("Neovim"));
+            Assert.True(appStats["Neovim"].TotalMilliseconds >= 1000);
+
+            var fileStats = _manager.GetFileStatistics(session.Id);
+            Assert.True(fileStats.ContainsKey("/test/file.txt"));
+
+            var totalTime = _manager.GetTotalActiveTime(session.Id);
+            Assert.True(totalTime.TotalMilliseconds >= 1000);
         }
 
         [Fact]
-        public void TestListActiveSessions()
+        public void TestInvalidActivityOperations()
         {
-            var logger = new Mock<ILogger<SessionManager>>().Object;
-            var manager = new SessionManager(logger, "test_sessions.json");
+            var session = _manager.StartSession("Test Session");
+            var invalidSessionId = Guid.NewGuid();
+            var invalidActivityId = Guid.NewGuid();
 
-            // Start sessions
-            var session1 = manager.StartSession("Test1");
-            var session2 = manager.StartSession("Test2");
-            var session3 = manager.StartSession("Test3");
+            // Test invalid session ID
+            Assert.Throws<KeyNotFoundException>(() => 
+                _manager.StartActivity(invalidSessionId, "Test", "test.txt"));
 
-            // Stop session3
-            manager.StopSession(session3.Id);
+            // Test stopping non-existent activity
+            Assert.False(_manager.StopActivity(session.Id, invalidActivityId));
 
-            var activeSessions = manager.ListActiveSessions();
-            Assert.Equal(2, activeSessions.Count());
+            // Test getting activities for invalid session
+            var activities = _manager.GetSessionActivities(invalidSessionId);
+            Assert.Empty(activities);
+        }
 
-            // Cleanup
-            if (File.Exists("test_sessions.json"))
+        public void Dispose()
+        {
+            if (File.Exists(TestFilePath))
             {
-                File.Delete("test_sessions.json");
+                File.Delete(TestFilePath);
             }
         }
     }

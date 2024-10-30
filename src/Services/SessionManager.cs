@@ -1,110 +1,62 @@
-using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using TimeTracker.Models;
-using TimeTracker.Interfaces;
-using Newtonsoft.Json;
+using Microsoft.Extensions.Logging;
 
 namespace TimeTracker.Services
 {
     public class SessionManager : ISessionManager
     {
-        private Dictionary<Guid, Session> _sessions = new();
         private readonly ILogger<SessionManager> _logger;
-        private readonly string _storageFile;
+        private readonly Dictionary<Guid, Session> _sessions;
+        private readonly IActivityMonitor _activityMonitor;
 
-        public SessionManager(ILogger<SessionManager> logger, string storageFile = "sessions.json")
+        public SessionManager(ILogger<SessionManager> logger, IActivityMonitor activityMonitor)
         {
             _logger = logger;
-            _storageFile = storageFile;
-            LoadSessions();
+            _activityMonitor = activityMonitor;
+            _sessions = new Dictionary<Guid, Session>();
         }
 
-        private void LoadSessions()
-        {
-            try
-            {
-                if (File.Exists(_storageFile))
-                {
-                    var json = File.ReadAllText(_storageFile);
-                    try
-                    {
-                        _sessions = JsonConvert.DeserializeObject<Dictionary<Guid, Session>>(json) ?? new Dictionary<Guid, Session>();
-                    }
-                    catch (JsonSerializationException)
-                    {
-                        // If dictionary deserialization fails, try deserializing as list
-                        var sessionsList = JsonConvert.DeserializeObject<List<Session>>(json);
-                        if (sessionsList != null)
-                        {
-                            _sessions = sessionsList.ToDictionary(s => s.Id);
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error loading sessions. Starting with empty session list.");
-                _sessions = new Dictionary<Guid, Session>();
-                // Delete corrupted file
-                if (File.Exists(_storageFile))
-                {
-                    try
-                    {
-                        File.Delete(_storageFile);
-                    }
-                    catch (Exception deleteEx)
-                    {
-                        _logger.LogError(deleteEx, "Failed to delete corrupted sessions file");
-                    }
-                }
-            }
-        }
-
-        private void SaveSessions()
-        {
-            try
-            {
-                var json = JsonConvert.SerializeObject(_sessions, Formatting.Indented);
-                File.WriteAllText(_storageFile, json);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error saving sessions");
-            }
-        }
-
-        // Rest of the methods remain the same
-        public Session StartSession(string name)
+        public Guid StartSession(string name)
         {
             var session = new Session
             {
+                Id = Guid.NewGuid(),
                 Name = name,
-                StartTime = DateTime.Now,
-                IsActive = true
+                StartTime = DateTime.UtcNow,
+                IsActive = true,
+                Activities = new List<Activity>()
             };
 
             _sessions[session.Id] = session;
-            _logger.LogInformation("Session started: {Id} - {Name}", session.Id, session.Name);
-            SaveSessions();
-            return session;
+            _logger.LogInformation($"Started new session: {name} with ID: {session.Id}");
+            return session.Id;
         }
 
-        public bool StopSession(Guid id)
+        public void StopSession(Guid sessionId)
         {
-            if (!_sessions.TryGetValue(id, out var session) || !session.IsActive)
+            if (_sessions.TryGetValue(sessionId, out var session))
             {
-                return false;
+                session.IsActive = false;
+                session.EndTime = DateTime.UtcNow;
+                _logger.LogInformation($"Stopped session: {session.Name} with ID: {sessionId}");
             }
-
-            session.IsActive = false;
-            session.EndTime = DateTime.Now;
-            _logger.LogInformation("Session stopped: {Id}", id);
-            SaveSessions();
-            return true;
+            else
+            {
+                _logger.LogWarning($"Attempted to stop non-existent session: {sessionId}");
+            }
         }
 
-        public Session? GetSession(Guid id)
+        public Session GetSession(Guid sessionId)
         {
-            return _sessions.TryGetValue(id, out var session) ? session : null;
+            if (_sessions.TryGetValue(sessionId, out var session))
+            {
+                return session;
+            }
+            _logger.LogWarning($"Session not found: {sessionId}");
+            return null;
         }
 
         public IEnumerable<Session> ListActiveSessions()
@@ -117,32 +69,79 @@ namespace TimeTracker.Services
             return _sessions.Values;
         }
 
-        public bool RestartSession(Guid id)
+        public void RestartSession(Guid sessionId)
         {
-            if (!_sessions.TryGetValue(id, out var session) || session.IsActive)
+            if (_sessions.TryGetValue(sessionId, out var session))
             {
-                return false;
+                session.IsActive = true;
+                session.EndTime = null;
+                _logger.LogInformation($"Restarted session: {session.Name} with ID: {sessionId}");
             }
-
-            session.IsActive = true;
-            session.StartTime = DateTime.Now;
-            session.EndTime = null;
-            _logger.LogInformation("Session restarted: {Id}", id);
-            SaveSessions();
-            return true;
+            else
+            {
+                _logger.LogWarning($"Attempted to restart non-existent session: {sessionId}");
+            }
         }
 
-        public bool RemoveSession(Guid id)
+        public void RemoveSession(Guid sessionId)
         {
-            if (!_sessions.ContainsKey(id))
+            if (_sessions.Remove(sessionId))
             {
-                return false;
+                _logger.LogInformation($"Removed session with ID: {sessionId}");
+            }
+            else
+            {
+                _logger.LogWarning($"Attempted to remove non-existent session: {sessionId}");
+            }
+        }
+
+        public void StopActivity(Guid sessionId, Guid activityId)
+        {
+            if (_sessions.TryGetValue(sessionId, out var session))
+            {
+                var activity = session.Activities.FirstOrDefault(a => a.Id == activityId);
+                if (activity != null)
+                {
+                    activity.EndTime = DateTime.UtcNow;
+                    _logger.LogInformation($"Stopped activity {activityId} in session {sessionId}");
+                }
+                else
+                {
+                    _logger.LogWarning($"Activity {activityId} not found in session {sessionId}");
+                }
+            }
+            else
+            {
+                _logger.LogWarning($"Session not found: {sessionId}");
+            }
+        }
+
+        public Guid StartActivity(Guid sessionId)
+        {
+            if (!_sessions.TryGetValue(sessionId, out var session))
+            {
+                _logger.LogWarning($"Session not found: {sessionId}");
+                return Guid.Empty;
             }
 
-            _sessions.Remove(id);
-            _logger.LogInformation("Session removed: {Id}", id);
-            SaveSessions();
-            return true;
+            if (!session.IsActive)
+            {
+                _logger.LogWarning($"Cannot start activity in inactive session: {sessionId}");
+                return Guid.Empty;
+            }
+
+            var currentWindow = _activityMonitor.GetCurrentActivity();
+            var activity = new Activity
+            {
+                Id = Guid.NewGuid(),
+                ApplicationName = currentWindow.applicationName,
+                FilePath = currentWindow.filePath,
+                StartTime = DateTime.UtcNow
+            };
+
+            session.Activities.Add(activity);
+            _logger.LogInformation($"Started activity {activity.Id} in session {sessionId}");
+            return activity.Id;
         }
     }
 }

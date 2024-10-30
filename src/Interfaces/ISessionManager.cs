@@ -2,16 +2,18 @@ using System;
 using System.Collections.Generic;
 using TimeTracker.Models;
 
-namespace TimeTracker.Interfaces
+namespace TimeTracker.Services
 {
     public interface ISessionManager
     {
-        Session StartSession(string name);
-        bool StopSession(Guid id);
-        Session? GetSession(Guid id);
+        Guid StartSession(string name);
+        void StopSession(Guid sessionId);
+        Session GetSession(Guid sessionId);
         IEnumerable<Session> ListActiveSessions();
         IEnumerable<Session> ListAllSessions();
-        bool RestartSession(Guid id);
-        bool RemoveSession(Guid id);
+        void RestartSession(Guid sessionId);
+        void RemoveSession(Guid sessionId);
+        void StopActivity(Guid sessionId, Guid activityId);
+        Guid StartActivity(Guid sessionId);
     }
 }
