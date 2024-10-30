@@ -1,24 +1,24 @@
-using System;
 using TimeTracker.Models;
 using Xunit;
 
 namespace TimeTracker.Tests
 {
-    public class SessionTests
+    public class TestSession
     {
         [Fact]
-        public void Session_Constructor_InitializesCorrectly()
+        public void TestSessionCreation()
         {
-            // Arrange & Act
-            string sessionName = "TestSession";
-            var session = new Session(sessionName);
+            var session = new Session
+            {
+                Name = "Test Session",
+                StartTime = DateTime.Now,
+                IsActive = true
+            };
 
-            // Assert
-            Assert.Equal(sessionName, session.Name);
+            Assert.Empty(session.ApplicationTimes);
+            Assert.Empty(session.FileTimes);
             Assert.True(session.IsActive);
             Assert.NotEqual(Guid.Empty, session.Id);
-            Assert.NotNull(session.ApplicationTimes);
-            Assert.NotNull(session.FileTimes);
         }
     }
 }
